@@ -28,9 +28,9 @@
 
 ---
 
-## 📦 获取 AllMusic3
+## 📦 获取 AllMusic
 
-本 API 依赖 AllMusic3 的核心接口与运行环境。
+本 API 依赖 AllMusic 的核心接口与运行环境。
 
 AllMusic 仓库地址：
 
