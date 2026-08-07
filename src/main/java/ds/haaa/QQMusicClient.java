@@ -8,10 +8,13 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 
 public class QQMusicClient {
+    private static final int PLAYLIST_PAGE_SIZE = 500;
 
     public static List<QQSong> search(String keyword, int limit) {
         List<QQSong> list = searchMusicu(keyword, limit);
@@ -203,6 +206,99 @@ public class QQMusicClient {
             obj = QQSong.getObj(obj, d);
         }
         return QQSong.getArray(obj, "list");
+    }
+
+    public static PlaylistInfo getPlaylist(String playlistId) {
+        String id = playlistId == null ? "" : playlistId.trim();
+        if (!id.matches("[0-9]{1,20}")) {
+            return null;
+        }
+
+        try {
+            long dissId = Long.parseLong(id);
+            Set<String> songIds = new LinkedHashSet<>();
+            String name = "";
+            int begin = 0;
+            int total = Integer.MAX_VALUE;
+            int page = 0;
+
+            while (begin < total && begin >= 0 && page++ < 1000) {
+                JsonObject req = new JsonObject();
+                req.add("comm", baseComm());
+
+                JsonObject detail = new JsonObject();
+                detail.addProperty("module", "music.srfDissInfo.DissInfo");
+                detail.addProperty("method", "CgiGetDiss");
+
+                JsonObject param = new JsonObject();
+                param.addProperty("disstid", dissId);
+                param.addProperty("userinfo", 1);
+                param.addProperty("tag", 1);
+                param.addProperty("song_begin", begin);
+                param.addProperty("song_num", PLAYLIST_PAGE_SIZE);
+                detail.add("param", param);
+                req.add("req_0", detail);
+
+                HttpResObj res = QQMusicHttpClient.postJson(
+                        QQMusicHttpClient.MUSICU_URL,
+                        AllMusic.gson.toJson(req)
+                );
+                if (res == null || !res.ok || res.data == null || res.data.isEmpty()) {
+                    return songIds.isEmpty() ? null
+                            : new PlaylistInfo(name, new ArrayList<>(songIds));
+                }
+
+                JsonObject root = parseObj(res.data);
+                JsonObject req0 = QQSong.getObj(root, "req_0");
+                JsonObject data = QQSong.getObj(req0, "data");
+                if (getInt(req0, "code", -1) != 0 || data == null
+                        || getInt(data, "code", 0) != 0) {
+                    break;
+                }
+
+                JsonObject dirInfo = QQSong.getObj(data, "dirinfo");
+                String pageName = QQSong.getString(dirInfo, "title");
+                if (!pageName.isEmpty()) {
+                    name = pageName;
+                }
+
+                JsonArray items = QQSong.getArray(data, "songlist");
+                if (items == null || items.size() == 0) {
+                    break;
+                }
+
+                int oldSize = songIds.size();
+                for (JsonElement element : items) {
+                    if (element == null || !element.isJsonObject()) {
+                        continue;
+                    }
+                    QQSong song = QQSong.fromSingleSong(element.getAsJsonObject());
+                    if (song != null && song.realId().matches("[0-9A-Za-z]{10,32}")) {
+                        songIds.add(song.realId());
+                    }
+                }
+
+                total = getInt(data, "total_song_num", begin + items.size());
+                begin += items.size();
+                if (songIds.size() == oldSize) {
+                    break;
+                }
+            }
+
+            if (songIds.isEmpty()) {
+                return null;
+            }
+            if (name.isEmpty()) {
+                name = "QQMusic " + id;
+            }
+            return new PlaylistInfo(name, new ArrayList<>(songIds));
+        } catch (Exception e) {
+            QQMusicHttpClient.log("<red>QQ音乐歌单解析错误：" + id);
+            if (QQSong.debug) {
+                e.printStackTrace();
+            }
+            return null;
+        }
     }
 
     public static QQSong getSong(String id) {
@@ -440,6 +536,24 @@ public class QQMusicClient {
         comm.addProperty("cv", 0);
         comm.addProperty("format", "json");
         return comm;
+    }
+
+    public static final class PlaylistInfo {
+        private final String name;
+        private final List<String> songIds;
+
+        private PlaylistInfo(String name, List<String> songIds) {
+            this.name = name;
+            this.songIds = songIds;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public List<String> getSongIds() {
+            return songIds;
+        }
     }
 
     @SuppressWarnings("deprecation")

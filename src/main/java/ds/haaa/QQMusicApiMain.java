@@ -8,14 +8,33 @@ import com.coloryr.allmusic.server.core.objs.message.ARG;
 import com.coloryr.allmusic.server.core.objs.music.SearchPageObj;
 import com.coloryr.allmusic.server.core.objs.music.SongInfoObj;
 import com.coloryr.allmusic.server.core.saves.MusicListSave;
-import com.coloryr.allmusic.server.core.utils.Function;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class QQMusicApiMain implements IMusicApi {
-    private boolean isUpdate;
+    private static final Pattern SONG_MID_PARAM = Pattern.compile(
+            "(?i)(?:^|[?&#])songmid=([0-9a-z]{10,32})(?:$|[&#])"
+    );
+    private static final Pattern PLAYLIST_ID_PARAM = Pattern.compile(
+            "(?i)(?:^|[?&#])(?:disstid|dissid)=([0-9]+)(?:$|[&#])"
+    );
+    private static final Pattern PLAYLIST_PATH = Pattern.compile(
+            "(?i)/(?:playlist|taoge)/([0-9]+)(?:\\.html)?(?:$|[/?#])"
+    );
+    private static final Pattern GENERIC_ID_PARAM = Pattern.compile(
+            "(?i)(?:^|[?&#])id=([0-9]+)(?:$|[&#])"
+    );
+    private static final Pattern SONG_PATH = Pattern.compile(
+            "(?i)/(?:song|songdetail)/([0-9a-z]{10,32})(?:\\.html)?(?:$|[/?#])"
+    );
+    private volatile boolean isUpdate;
 
     public QQMusicApiMain() {
         QQMusicHttpClient.log("<yellow>正在初始化QQ音乐API");
@@ -36,28 +55,50 @@ public class QQMusicApiMain implements IMusicApi {
         if (arg == null) {
             return "";
         }
-        if (arg.contains("songmid=")) {
-            if (arg.contains("&")) {
-                return Function.getString(arg, "songmid=", "&");
-            }
-            return Function.getString(arg, "songmid=", null);
+        String value = arg.trim();
+        try {
+            value = URLDecoder.decode(value, StandardCharsets.UTF_8.toString());
+        } catch (Exception ignored) {
         }
-        if (arg.contains("song/")) {
-            String id = Function.getString(arg, "song/", null);
-            if (id != null && id.contains(".")) {
-                id = Function.getString(id, null, ".");
-            }
-            if (id != null && id.contains("?")) {
-                id = Function.getString(id, null, "?");
-            }
-            return id == null ? arg : id;
+
+        String id = firstMatch(SONG_MID_PARAM, value);
+        if (!id.isEmpty()) {
+            return id;
         }
-        return arg;
+        id = firstMatch(PLAYLIST_ID_PARAM, value);
+        if (!id.isEmpty()) {
+            return id;
+        }
+        id = firstMatch(PLAYLIST_PATH, value);
+        if (!id.isEmpty()) {
+            return id;
+        }
+
+        String lowerValue = value.toLowerCase(Locale.ROOT);
+        if (lowerValue.contains("playlist") || lowerValue.contains("taoge")
+                || lowerValue.contains("share/details")) {
+            id = firstMatch(GENERIC_ID_PARAM, value);
+            if (!id.isEmpty()) {
+                return id;
+            }
+        }
+
+        id = firstMatch(SONG_PATH, value);
+        if (!id.isEmpty()) {
+            return id;
+        }
+        return value;
+    }
+
+    private static String firstMatch(Pattern pattern, String value) {
+        Matcher matcher = pattern.matcher(value == null ? "" : value);
+        return matcher.find() ? matcher.group(1) : "";
     }
 
     @Override
     public boolean checkId(String id) {
-        return id != null && id.length() >= 10 && id.length() <= 32 && id.matches("[0-9A-Za-z]+");
+        return id != null && (id.matches("[0-9]{1,20}")
+                || id.matches("[0-9A-Za-z]{10,32}"));
     }
 
     @Override
@@ -128,7 +169,27 @@ public class QQMusicApiMain implements IMusicApi {
         final Thread thread = new Thread(() -> {
             isUpdate = true;
             try {
-                String[] ids = id.split(",");
+                String value = id == null ? "" : id.trim();
+                if (value.matches("[0-9]{1,20}")) {
+                    QQMusicClient.PlaylistInfo playlist = QQMusicClient.getPlaylist(value);
+                    if (playlist == null || playlist.getSongIds().isEmpty()) {
+                        AllMusic.side.sendMessageTask(
+                                sender,
+                                "QQ音乐歌单获取失败，请检查歌单ID、网址或访问权限"
+                        );
+                        return;
+                    }
+                    MusicListSave.addIdleList(playlist.getSongIds(), getId());
+                    AllMusic.side.sendMessageTask(
+                            sender,
+                            AllMusic.getMessage().musicPlay.listMusic.get.replace(
+                                    ARG.name, playlist.getName()
+                            )
+                    );
+                    return;
+                }
+
+                String[] ids = value.split(",");
                 List<String> list = new ArrayList<>();
                 for (String item : ids) {
                     String temp = getMusicId(item.trim());
@@ -140,15 +201,19 @@ public class QQMusicApiMain implements IMusicApi {
                     MusicListSave.addIdleList(list, getId());
                     AllMusic.side.sendMessageTask(sender, AllMusic.getMessage().musicPlay.listMusic.get.replace(ARG.name, "QQMusic"));
                 } else {
-                    AllMusic.side.sendMessageTask(sender, "QQ音乐歌单暂只支持逗号分隔的songmid列表");
+                    AllMusic.side.sendMessageTask(
+                            sender,
+                            "QQ音乐歌单获取失败，请输入歌单ID、歌单网址或逗号分隔的songmid"
+                    );
                 }
             } catch (Exception e) {
                 QQMusicHttpClient.log("<red>QQ音乐列表获取错误");
                 if (QQSong.debug) {
                     e.printStackTrace();
                 }
+            } finally {
+                isUpdate = false;
             }
-            isUpdate = false;
         }, "AllMusic_QQMusic_setList");
         thread.start();
     }
