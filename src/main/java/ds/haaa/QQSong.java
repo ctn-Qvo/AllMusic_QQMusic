@@ -5,7 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 public class QQSong {
-    public static boolean debug = false;
+    public static boolean debug = true;
 
     public String id;
     public String mid;
@@ -70,6 +70,21 @@ public class QQSong {
 
         JsonArray singers = getArray(item, "singer");
         song.singer = joinSingers(singers);
+        return song;
+    }
+
+    public static QQSong fromSmartboxItem(JsonObject item) {
+        QQSong song = new QQSong();
+        song.id = getString(item, "id");
+        song.mid = firstNotEmpty(getString(item, "mid"), getString(item, "songmid"));
+        song.mediaMid = firstNotEmpty(getString(item, "media_mid"), song.mid);
+        song.name = firstNotEmpty(getString(item, "name"), getString(item, "songname"));
+        song.singer = getString(item, "singer");
+        if (song.singer == null || song.singer.isEmpty()) {
+            song.singer = "未知歌手";
+        }
+        song.album = firstNotEmpty(getString(item, "album"), getString(item, "albumname"));
+        song.albumMid = firstNotEmpty(getString(item, "albummid"), getString(item, "album_mid"));
         return song;
     }
 

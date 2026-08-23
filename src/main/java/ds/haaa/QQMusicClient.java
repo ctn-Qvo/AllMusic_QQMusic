@@ -17,17 +17,84 @@ public class QQMusicClient {
     private static final int PLAYLIST_PAGE_SIZE = 500;
 
     public static List<QQSong> search(String keyword, int limit) {
-        List<QQSong> list = searchMusicu(keyword, limit);
+        boolean guest = !QQMusicHttpClient.hasLoginCookie();
+        if (guest) {
+            List<QQSong> guestList = searchSmartbox(keyword, limit);
+            if (guestList != null && !guestList.isEmpty()) {
+                return guestList;
+            }
+            QQMusicHttpClient.log("<yellow>QQ音乐游客联想搜索为空，尝试musicu搜索接口");
+        }
+
+        List<QQSong> list = searchMusicu(keyword, limit, guest);
 
         if (list != null && !list.isEmpty()) {
             return list;
         }
 
         QQMusicHttpClient.log("<yellow>QQ音乐musicu搜索为空，尝试旧搜索接口");
-        return searchOld(keyword, limit);
+        return searchOld(keyword, limit, guest);
     }
 
-    private static List<QQSong> searchMusicu(String keyword, int limit) {
+    private static List<QQSong> searchSmartbox(String keyword, int limit) {
+        List<QQSong> list = new ArrayList<>();
+
+        try {
+            if (keyword == null || keyword.trim().isEmpty()) {
+                QQMusicHttpClient.log("<red>QQ音乐游客搜索关键字为空");
+                return null;
+            }
+
+            keyword = keyword.trim();
+            String url = QQMusicHttpClient.SMARTBOX_URL
+                    + "?key=" + QQMusicHttpClient.enc(keyword)
+                    + "&is_xml=0"
+                    + "&format=json"
+                    + "&hostUin=0";
+
+            HttpResObj res = QQMusicHttpClient.getAnonymous(url);
+            if (res == null || !res.ok || res.data == null || res.data.isEmpty()) {
+                QQMusicHttpClient.log("<red>QQ音乐游客联想搜索请求失败");
+                return null;
+            }
+
+            JsonObject root = parseObj(res.data);
+            JsonObject data = QQSong.getObj(root, "data");
+            JsonObject song = QQSong.getObj(data, "song");
+            JsonArray arr = QQSong.getArray(song, "itemlist");
+
+            if (arr == null || arr.size() == 0) {
+                QQMusicHttpClient.log("<yellow>QQ音乐游客联想搜索结果为空，keyword=" + keyword
+                        + "，返回=" + QQMusicHttpClient.cut(res.data, 1000));
+                return null;
+            }
+
+            int max = limit <= 0 ? arr.size() : Math.min(limit, arr.size());
+            for (int i = 0; i < max; i++) {
+                JsonElement element = arr.get(i);
+                if (element == null || !element.isJsonObject()) {
+                    continue;
+                }
+
+                QQSong temp = QQSong.fromSmartboxItem(element.getAsJsonObject());
+                if (temp != null && temp.mid != null && !temp.mid.isEmpty()) {
+                    list.add(temp);
+                }
+            }
+
+            QQMusicHttpClient.log("<green>QQ音乐游客联想搜索成功：" + keyword + "，数量=" + list.size());
+        } catch (Exception e) {
+            QQMusicHttpClient.log("<red>QQ音乐游客联想搜索解析错误");
+            if (QQSong.debug) {
+                e.printStackTrace();
+            }
+            return null;
+        }
+
+        return list.isEmpty() ? null : list;
+    }
+
+    private static List<QQSong> searchMusicu(String keyword, int limit, boolean guest) {
         List<QQSong> list = new ArrayList<>();
 
         try {
@@ -44,6 +111,9 @@ public class QQMusicClient {
             comm.addProperty("outCharset", "utf-8");
             comm.addProperty("platform", "yqq.json");
             comm.addProperty("needNewCode", 0);
+            if (guest) {
+                comm.addProperty("uin", "0");
+            }
             req.add("comm", comm);
 
             JsonObject search = new JsonObject();
@@ -55,11 +125,15 @@ public class QQMusicClient {
             param.addProperty("num_per_page", limit <= 0 ? 30 : limit);
             param.addProperty("page_num", 1);
             param.addProperty("search_type", 0);
+            param.addProperty("remoteplace", "txt.yqq.center");
 
             search.add("param", param);
             req.add("req_1", search);
 
-            HttpResObj res = QQMusicHttpClient.postJson(QQMusicHttpClient.MUSICU_URL, AllMusic.gson.toJson(req));
+            String body = AllMusic.gson.toJson(req);
+            HttpResObj res = guest
+                    ? QQMusicHttpClient.postJsonAnonymous(QQMusicHttpClient.MUSICU_URL, body)
+                    : QQMusicHttpClient.postJson(QQMusicHttpClient.MUSICU_URL, body);
             if (res == null || !res.ok || res.data == null || res.data.isEmpty()) {
                 QQMusicHttpClient.log("<red>QQ音乐musicu搜索请求失败");
                 return null;
@@ -97,7 +171,7 @@ public class QQMusicClient {
         return list.isEmpty() ? null : list;
     }
 
-    private static List<QQSong> searchOld(String keyword, int limit) {
+    private static List<QQSong> searchOld(String keyword, int limit, boolean guest) {
         List<QQSong> list = new ArrayList<>();
 
         try {
@@ -123,7 +197,7 @@ public class QQMusicClient {
                     + "&n=" + (limit <= 0 ? 30 : limit)
                     + "&w=" + QQMusicHttpClient.enc(keyword)
                     + "&g_tk=5381"
-                    + "&loginUin=" + QQMusicHttpClient.getUin()
+                    + "&loginUin=" + (guest ? "0" : QQMusicHttpClient.getUin())
                     + "&hostUin=0"
                     + "&format=json"
                     + "&inCharset=utf8"
@@ -132,7 +206,9 @@ public class QQMusicClient {
                     + "&platform=yqq.json"
                     + "&needNewCode=0";
 
-            HttpResObj res = QQMusicHttpClient.get(url);
+            HttpResObj res = guest
+                    ? QQMusicHttpClient.getAnonymous(url)
+                    : QQMusicHttpClient.get(url);
             if (res == null || !res.ok || res.data == null || res.data.isEmpty()) {
                 QQMusicHttpClient.log("<red>QQ音乐旧搜索请求失败");
                 return null;

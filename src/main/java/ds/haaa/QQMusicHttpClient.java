@@ -22,6 +22,7 @@ public class QQMusicHttpClient {
     public static final String MUSICU_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg";
     public static final String LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
     public static final String SEARCH_OLD_URL = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp";
+    public static final String SMARTBOX_URL = "https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg";
 
     private static final String REFERER = "https://y.qq.com/";
     private static final String ORIGIN = "https://y.qq.com";
@@ -29,9 +30,17 @@ public class QQMusicHttpClient {
             + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
     public static HttpResObj get(String url) {
+        return get(url, true);
+    }
+
+    public static HttpResObj getAnonymous(String url) {
+        return get(url, false);
+    }
+
+    private static HttpResObj get(String url, boolean includeCookie) {
         try {
             HttpGet request = new HttpGet(url);
-            setHeaders(request);
+            setHeaders(request, includeCookie);
             log("<gray>QQ音乐GET: " + url);
             return execute(request, "QQ音乐GET请求失败：" + url);
         } catch (Exception e) {
@@ -48,9 +57,17 @@ public class QQMusicHttpClient {
     }
 
     public static HttpResObj postJson(String url, String json) {
+        return postJson(url, json, true);
+    }
+
+    public static HttpResObj postJsonAnonymous(String url, String json) {
+        return postJson(url, json, false);
+    }
+
+    private static HttpResObj postJson(String url, String json, boolean includeCookie) {
         try {
             HttpPost request = new HttpPost(url);
-            setHeaders(request);
+            setHeaders(request, includeCookie);
             request.setHeader("Content-Type", "application/json;charset=UTF-8");
             request.setEntity(new StringEntity(json, ContentType.APPLICATION_JSON));
             log("<gray>QQ音乐POST: " + url);
@@ -65,7 +82,10 @@ public class QQMusicHttpClient {
         }
     }
 
-    private static void setHeaders(com.coloryr.allmusic.libs.org.apache.hc.core5.http.HttpMessage request) {
+    private static void setHeaders(
+            com.coloryr.allmusic.libs.org.apache.hc.core5.http.HttpMessage request,
+            boolean includeCookie
+    ) {
         request.setHeader("User-Agent", UA);
         request.setHeader("Referer", REFERER);
         request.setHeader("Origin", ORIGIN);
@@ -73,13 +93,27 @@ public class QQMusicHttpClient {
         request.setHeader("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
         request.setHeader("Connection", "keep-alive");
 
-        String cookie = buildCookieHeader();
+        String cookie = includeCookie ? buildCookieHeader() : "";
         if (!cookie.isEmpty()) {
             request.setHeader("Cookie", cookie);
             log("<gray>QQ音乐Cookie已注入，cookie：" + cookie);
+        } else if (!includeCookie) {
+            log("<gray>QQ音乐使用游客搜索请求，不注入Cookie");
         } else {
             log("<yellow>QQ音乐Cookie为空，将以未登录状态请求");
         }
+    }
+
+    public static boolean hasLoginCookie() {
+        return hasCookieValue("qqmusic_key")
+                || hasCookieValue("qm_keyst")
+                || hasCookieValue("psrf_qqaccess_token")
+                || hasCookieValue("psrf_qqrefresh_token")
+                || hasCookieValue("wxrefresh_token");
+    }
+
+    private static boolean hasCookieValue(String name) {
+        return !getCookieValue(name, "").isEmpty();
     }
 
     private static String buildCookieHeader() {
@@ -91,11 +125,11 @@ public class QQMusicHttpClient {
 
             StringBuilder builder = new StringBuilder();
 
-            appendCookie(builder, "login_type", getCookieValue("login_type", "1"));
-            appendCookie(builder, "tmeLoginType", getCookieValue("tmeLoginType", "2"));
+            appendCookie(builder, "login_type", getCookieValue("login_type", ""));
+            appendCookie(builder, "tmeLoginType", getCookieValue("tmeLoginType", ""));
             appendCookie(builder, "euin", getCookieValue("euin", ""));
             appendCookie(builder, "RK", getCookieValue("RK", ""));
-            appendCookie(builder, "_qpsvr_localtk", getCookieValue("_qpsvr_localtk", "0.41530072345568325"));
+            appendCookie(builder, "_qpsvr_localtk", getCookieValue("_qpsvr_localtk", ""));
             appendCookie(builder, "music_ignore_pskey", getCookieValue("music_ignore_pskey", ""));
             appendCookie(builder, "psrf_qqrefresh_token", getCookieValue("psrf_qqrefresh_token", ""));
 
@@ -134,7 +168,7 @@ public class QQMusicHttpClient {
     }
 
     private static void appendCookie(StringBuilder builder, String name, String value) {
-        if (name == null || name.isEmpty()) {
+        if (name == null || name.isEmpty() || value == null || value.isEmpty()) {
             return;
         }
 
@@ -142,10 +176,7 @@ public class QQMusicHttpClient {
             builder.append("; ");
         }
 
-        builder.append(name).append("=");
-        if (value != null) {
-            builder.append(value);
-        }
+        builder.append(name).append("=").append(value);
     }
 
     public static String getCookieValue(String name, String def) {
