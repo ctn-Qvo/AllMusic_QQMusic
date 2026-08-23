@@ -5,7 +5,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 public class QQSong {
-    public static boolean debug = true;
+    public static boolean debug = false;
 
     public String id;
     public String mid;
