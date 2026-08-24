@@ -2,6 +2,8 @@ package ds.haaa;
 
 import com.coloryr.allmusic.libs.org.apache.hc.client5.http.classic.methods.HttpHead;
 import com.coloryr.allmusic.libs.org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
+import com.coloryr.allmusic.libs.org.apache.hc.client5.http.protocol.HttpClientContext;
+import com.coloryr.allmusic.libs.org.apache.hc.core5.http.HttpHost;
 import com.coloryr.allmusic.server.core.AllMusic;
 import com.coloryr.allmusic.server.core.music.MusicHttpClient;
 import com.coloryr.allmusic.server.core.objs.HttpResObj;
@@ -10,6 +12,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -18,7 +21,8 @@ import java.util.Set;
 
 public class QQMusicClient {
     private static final int PLAYLIST_PAGE_SIZE = 500;
-    private static final String EXTERNAL_API_KEY = "523077333";
+    // 使用之前测试有效的 Key
+    private static final String EXTERNAL_API_KEY = "9kEXWtwdr4jqw4Jm3K27L5Jy8y";
     private static final String EXTERNAL_API_BASE = "https://api.tjit.net/api/qqmusic/";
 
     public static List<QQSong> search(String keyword, int limit) {
@@ -384,30 +388,59 @@ public class QQMusicClient {
         return EXTERNAL_API_BASE + "?key=" + EXTERNAL_API_KEY + "&type=url&id=" + id;
     }
 
-    // 新增：跟随重定向并替换 .m4a 为 .mp3
+    // 增强版：跟随重定向并替换 .m4a 为 .mp3
     private static String followRedirectAndReplaceExt(String proxyUrl) {
         if (proxyUrl == null || proxyUrl.isEmpty()) {
             return proxyUrl;
         }
         try {
+            // 创建 HEAD 请求，设置超时
             HttpHead head = new HttpHead(proxyUrl);
             head.setHeader("User-Agent", "Mozilla/5.0");
-            try (CloseableHttpResponse response = MusicHttpClient.client.execute(head)) {
+            // 设置超时（使用默认的 30 秒即可，无需额外配置）
+            HttpClientContext context = HttpClientContext.create();
+            try (CloseableHttpResponse response = MusicHttpClient.client.execute(head, context)) {
                 int code = response.getCode();
+                // 处理重定向状态码
                 if (code == 301 || code == 302 || code == 303 || code == 307) {
                     String location = response.getFirstHeader("Location") != null
                             ? response.getFirstHeader("Location").getValue()
                             : null;
                     if (location != null && !location.isEmpty()) {
+                        // 处理相对路径
+                        if (location.startsWith("/")) {
+                            URI baseUri = new URI(proxyUrl);
+                            String base = baseUri.getScheme() + "://" + baseUri.getHost();
+                            if (baseUri.getPort() != -1 && baseUri.getPort() != 80 && baseUri.getPort() != 443) {
+                                base += ":" + baseUri.getPort();
+                            }
+                            location = base + location;
+                        } else if (!location.startsWith("http://") && !location.startsWith("https://")) {
+                            // 处理其他相对形式，简单拼接
+                            int lastSlash = proxyUrl.lastIndexOf('/');
+                            if (lastSlash > 0) {
+                                String base = proxyUrl.substring(0, lastSlash + 1);
+                                if (!base.endsWith("/")) base += "/";
+                                location = base + location;
+                            }
+                        }
+                        // 替换扩展名
                         if (location.toLowerCase().contains(".m4a")) {
-                            location = location.replaceAll("(?i)\\.m4a(\\?|$)", ".mp3$1");
+                            String newLocation = location.replaceAll("(?i)\\.m4a(\\?|$)", ".mp3$1");
+                            QQMusicHttpClient.log("<gray>外部API重定向：将 .m4a 替换为 .mp3: " + newLocation);
+                            return newLocation;
                         }
                         return location;
                     }
                 }
+                // 如果未重定向或状态码非重定向，直接返回原始代理链接（客户端可能自行处理）
+                QQMusicHttpClient.log("<yellow>外部API未返回重定向，使用原始代理链接");
             }
         } catch (Exception e) {
-            QQMusicHttpClient.log("<yellow>跟随重定向失败，使用原始链接");
+            QQMusicHttpClient.log("<yellow>跟随重定向失败，使用原始链接: " + e.getMessage());
+            if (QQSong.debug) {
+                e.printStackTrace();
+            }
         }
         return proxyUrl;
     }
@@ -482,6 +515,7 @@ public class QQMusicClient {
                 if (finalUrl.contains("&size=")) {
                     finalUrl = finalUrl.substring(0, finalUrl.indexOf("&size="));
                 }
+                // 官方链接通常为 mp3，无需替换
                 return finalUrl;
             }
             QQMusicHttpClient.log("<yellow>官方返回无效链接（result=" + result + "），尝试外部API：" + songMid);
