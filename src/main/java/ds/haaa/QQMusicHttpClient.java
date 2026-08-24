@@ -11,11 +11,18 @@ import com.coloryr.allmusic.server.core.AllMusic;
 import com.coloryr.allmusic.server.core.music.MusicHttpClient;
 import com.coloryr.allmusic.server.core.objs.CookieObj;
 import com.coloryr.allmusic.server.core.objs.HttpResObj;
+import com.google.gson.reflect.TypeToken;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
+import java.lang.reflect.Type;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 public class QQMusicHttpClient {
@@ -29,6 +36,156 @@ public class QQMusicHttpClient {
     private static final String UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+    private static final String COOKIE_FILE_NAME = "qqmusic_cookie.json";
+    private static String COOKIE_FILE_PATH;
+    private static List<CookieObj> qqCookiesList = new ArrayList<>();
+
+    static {
+        resolveCookiePath();
+        loadQqCookies();
+        if (QQSong.debug) {
+            log("<gray>QQ音乐Cookie加载完成，使用路径：" + COOKIE_FILE_PATH + "，有效条目数=" + qqCookiesList.size());
+        }
+    }
+
+    private static void resolveCookiePath() {
+        String[] dirs = {"plugins/AllMusic", "plugins/allmusic", "allmusic_server"};
+        for (String dir : dirs) {
+            File f = new File(dir, COOKIE_FILE_NAME);
+            if (f.exists()) {
+                COOKIE_FILE_PATH = f.getAbsolutePath();
+                return;
+            }
+        }
+        COOKIE_FILE_PATH = new File("allmusic_server", COOKIE_FILE_NAME).getAbsolutePath();
+        if (QQSong.debug) {
+            log("<yellow>未找到现有QQ音乐Cookie文件，将使用默认路径：" + COOKIE_FILE_PATH);
+        }
+    }
+
+    private static void loadQqCookies() {
+        try {
+            Path path = Paths.get(COOKIE_FILE_PATH);
+            if (!Files.exists(path)) {
+                if (QQSong.debug) {
+                    log("<yellow>QQ音乐独立Cookie文件不存在：" + COOKIE_FILE_PATH + "，将使用匿名访问");
+                }
+                return;
+            }
+            String text = new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+            Type listType = new TypeToken<ArrayList<CookieObj>>() {}.getType();
+            List<CookieObj> loaded = AllMusic.gson.fromJson(text, listType);
+            if (loaded == null || loaded.isEmpty()) {
+                if (QQSong.debug) {
+                    log("<yellow>QQ音乐Cookie文件内容为空，将使用匿名访问");
+                }
+                return;
+            }
+            loaded.removeIf(cookie -> cookie == null || cookie.name == null || cookie.value == null
+                    || cookie.name.trim().isEmpty() || cookie.value.trim().isEmpty());
+            qqCookiesList = loaded;
+            if (QQSong.debug) {
+                log("<green>成功加载QQ音乐Cookie文件：" + COOKIE_FILE_PATH + "，有效条目=" + qqCookiesList.size());
+            }
+        } catch (Exception e) {
+            if (QQSong.debug) {
+                log("<red>加载QQ音乐独立Cookie文件失败: " + e.getMessage());
+                e.printStackTrace();
+            }
+            qqCookiesList.clear();
+        }
+    }
+
+    private static String getCookieValue(String name, String def) {
+        if (name == null || name.isEmpty()) {
+            return def;
+        }
+        for (CookieObj cookie : qqCookiesList) {
+            if (name.equals(cookie.name)) {
+                return cookie.value == null ? def : cookie.value;
+            }
+        }
+        return def;
+    }
+
+    private static boolean hasCookieValue(String name) {
+        return !getCookieValue(name, "").isEmpty();
+    }
+
+    public static boolean hasLoginCookie() {
+        return hasCookieValue("qqmusic_key")
+                || hasCookieValue("qm_keyst")
+                || hasCookieValue("psrf_qqaccess_token")
+                || hasCookieValue("psrf_qqrefresh_token")
+                || hasCookieValue("wxrefresh_token");
+    }
+
+    public static String getUin() {
+        String uin = getCookieValue("uin", "");
+        if (!uin.isEmpty()) {
+            return uin;
+        }
+        uin = getCookieValue("media_p_uin", "");
+        return uin.isEmpty() ? "0" : uin;
+    }
+
+    private static String buildCookieHeader() {
+        if (qqCookiesList.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder();
+        // 按优先级添加常见 cookie，也可以直接遍历全部，但这里保留原有逻辑以控制顺序
+        appendCookie(builder, "login_type");
+        appendCookie(builder, "tmeLoginType");
+        appendCookie(builder, "euin");
+        appendCookie(builder, "RK");
+        appendCookie(builder, "_qpsvr_localtk");
+        appendCookie(builder, "music_ignore_pskey");
+        appendCookie(builder, "psrf_qqrefresh_token");
+
+        String uin = getCookieValue("uin", "");
+        if (uin.isEmpty()) {
+            uin = getCookieValue("media_p_uin", "");
+        }
+        appendCookie(builder, "uin", uin);
+
+        appendCookie(builder, "pgv_pvid");
+        appendCookie(builder, "pgv_info");
+        appendCookie(builder, "fqm_sessionid");
+        appendCookie(builder, "fqm_pvqid");
+        appendCookie(builder, "psrf_access_token_expiresAt");
+        appendCookie(builder, "psrf_musickey_createtime");
+        appendCookie(builder, "psrf_qqaccess_token");
+        appendCookie(builder, "psrf_qqopenid");
+        appendCookie(builder, "psrf_qqunionid");
+        appendCookie(builder, "ptcz");
+        appendCookie(builder, "qm_keyst");
+        appendCookie(builder, "qqmusic_key");
+        appendCookie(builder, "ts_last");
+        appendCookie(builder, "ts_uid");
+        appendCookie(builder, "wxunionid");
+        appendCookie(builder, "wxrefresh_token");
+        appendCookie(builder, "wxopenid");
+
+        return builder.toString();
+    }
+
+    private static void appendCookie(StringBuilder builder, String name) {
+        String value = getCookieValue(name, "");
+        appendCookie(builder, name, value);
+    }
+
+    private static void appendCookie(StringBuilder builder, String name, String value) {
+        if (name == null || name.isEmpty() || value == null || value.isEmpty()) {
+            return;
+        }
+        if (builder.length() > 0) {
+            builder.append("; ");
+        }
+        builder.append(name).append("=").append(value);
+    }
+
     public static HttpResObj get(String url) {
         return get(url, true);
     }
@@ -41,11 +198,13 @@ public class QQMusicHttpClient {
         try {
             HttpGet request = new HttpGet(url);
             setHeaders(request, includeCookie);
-            log("<gray>QQ音乐GET: " + url);
+            if (QQSong.debug) {
+                log("<gray>QQ音乐GET: " + url);
+            }
             return execute(request, "QQ音乐GET请求失败：" + url);
         } catch (Exception e) {
-            log("<red>QQ音乐GET请求失败：" + url);
             if (QQSong.debug) {
+                log("<red>QQ音乐GET请求失败：" + url);
                 e.printStackTrace();
             }
             return null;
@@ -70,12 +229,14 @@ public class QQMusicHttpClient {
             setHeaders(request, includeCookie);
             request.setHeader("Content-Type", "application/json;charset=UTF-8");
             request.setEntity(new StringEntity(json, ContentType.APPLICATION_JSON));
-            log("<gray>QQ音乐POST: " + url);
-            log("<gray>QQ音乐POST Body: " + cut(json, 1200));
+            if (QQSong.debug) {
+                log("<gray>QQ音乐POST: " + url);
+                log("<gray>QQ音乐POST Body: " + cut(json, 1200));
+            }
             return execute(request, "QQ音乐POST请求失败：" + url);
         } catch (Exception e) {
-            log("<red>QQ音乐POST请求失败：" + url);
             if (QQSong.debug) {
+                log("<red>QQ音乐POST请求失败：" + url);
                 e.printStackTrace();
             }
             return null;
@@ -96,111 +257,18 @@ public class QQMusicHttpClient {
         String cookie = includeCookie ? buildCookieHeader() : "";
         if (!cookie.isEmpty()) {
             request.setHeader("Cookie", cookie);
-            log("<gray>QQ音乐Cookie已注入，cookie：" + cookie);
-        } else if (!includeCookie) {
-            log("<gray>QQ音乐使用游客搜索请求，不注入Cookie");
-        } else {
-            log("<yellow>QQ音乐Cookie为空，将以未登录状态请求");
-        }
-    }
-
-    public static boolean hasLoginCookie() {
-        return hasCookieValue("qqmusic_key")
-                || hasCookieValue("qm_keyst")
-                || hasCookieValue("psrf_qqaccess_token")
-                || hasCookieValue("psrf_qqrefresh_token")
-                || hasCookieValue("wxrefresh_token");
-    }
-
-    private static boolean hasCookieValue(String name) {
-        return !getCookieValue(name, "").isEmpty();
-    }
-
-    private static String buildCookieHeader() {
-        try {
-            List<CookieObj> cookies = AllMusic.cookie;
-            if (cookies == null || cookies.isEmpty()) {
-                return "";
-            }
-
-            StringBuilder builder = new StringBuilder();
-
-            appendCookie(builder, "login_type", getCookieValue("login_type", ""));
-            appendCookie(builder, "tmeLoginType", getCookieValue("tmeLoginType", ""));
-            appendCookie(builder, "euin", getCookieValue("euin", ""));
-            appendCookie(builder, "RK", getCookieValue("RK", ""));
-            appendCookie(builder, "_qpsvr_localtk", getCookieValue("_qpsvr_localtk", ""));
-            appendCookie(builder, "music_ignore_pskey", getCookieValue("music_ignore_pskey", ""));
-            appendCookie(builder, "psrf_qqrefresh_token", getCookieValue("psrf_qqrefresh_token", ""));
-
-            String uin = getCookieValue("uin", "");
-            if (uin.isEmpty()) {
-                uin = getCookieValue("media_p_uin", "");
-            }
-            appendCookie(builder, "uin", uin);
-
-            appendCookie(builder, "pgv_pvid", getCookieValue("pgv_pvid", ""));
-            appendCookie(builder, "pgv_info", getCookieValue("pgv_info", ""));
-            appendCookie(builder, "fqm_sessionid", getCookieValue("fqm_sessionid", ""));
-            appendCookie(builder, "fqm_pvqid", getCookieValue("fqm_pvqid", ""));
-            appendCookie(builder, "psrf_access_token_expiresAt", getCookieValue("psrf_access_token_expiresAt", ""));
-            appendCookie(builder, "psrf_musickey_createtime", getCookieValue("psrf_musickey_createtime", ""));
-            appendCookie(builder, "psrf_qqaccess_token", getCookieValue("psrf_qqaccess_token", ""));
-            appendCookie(builder, "psrf_qqopenid", getCookieValue("psrf_qqopenid", ""));
-            appendCookie(builder, "psrf_qqunionid", getCookieValue("psrf_qqunionid", ""));
-            appendCookie(builder, "ptcz", getCookieValue("ptcz", ""));
-            appendCookie(builder, "qm_keyst", getCookieValue("qm_keyst", ""));
-            appendCookie(builder, "qqmusic_key", getCookieValue("qqmusic_key", ""));
-            appendCookie(builder, "ts_last", getCookieValue("ts_last", ""));
-            appendCookie(builder, "ts_uid", getCookieValue("ts_uid", ""));
-            appendCookie(builder, "wxunionid", getCookieValue("wxunionid", ""));
-            appendCookie(builder, "wxrefresh_token", getCookieValue("wxrefresh_token", ""));
-            appendCookie(builder, "wxopenid", getCookieValue("wxopenid", ""));
-
-            return builder.toString();
-        } catch (Exception e) {
-            log("<red>QQ音乐Cookie读取失败");
             if (QQSong.debug) {
-                e.printStackTrace();
+                log("<gray>QQ音乐Cookie已注入，cookie：" + cookie);
             }
-            return "";
-        }
-    }
-
-    private static void appendCookie(StringBuilder builder, String name, String value) {
-        if (name == null || name.isEmpty() || value == null || value.isEmpty()) {
-            return;
-        }
-
-        if (builder.length() > 0) {
-            builder.append("; ");
-        }
-
-        builder.append(name).append("=").append(value);
-    }
-
-    public static String getCookieValue(String name, String def) {
-        try {
-            if (name == null || name.isEmpty() || AllMusic.cookie == null) {
-                return def;
+        } else if (!includeCookie) {
+            if (QQSong.debug) {
+                log("<gray>QQ音乐使用游客搜索请求，不注入Cookie");
             }
-            for (CookieObj cookie : AllMusic.cookie) {
-                if (cookie != null && name.equals(cookie.name)) {
-                    return cookie.value == null || cookie.value.isEmpty() ? def : cookie.value;
-                }
+        } else {
+            if (QQSong.debug) {
+                log("<yellow>QQ音乐Cookie为空，将以未登录状态请求");
             }
-        } catch (Exception ignored) {
         }
-        return def;
-    }
-
-    public static String getUin() {
-        String uin = getCookieValue("uin", "");
-        if (!uin.isEmpty()) {
-            return uin;
-        }
-        uin = getCookieValue("media_p_uin", "");
-        return uin.isEmpty() ? "0" : uin;
     }
 
     private static HttpResObj execute(
@@ -212,7 +280,9 @@ public class QQMusicHttpClient {
             HttpEntity entity = response.getEntity();
 
             if (entity == null) {
-                log("<red>QQ音乐返回空实体，HTTP=" + httpCode);
+                if (QQSong.debug) {
+                    log("<red>QQ音乐返回空实体，HTTP=" + httpCode);
+                }
                 return null;
             }
 
@@ -220,16 +290,18 @@ public class QQMusicHttpClient {
             EntityUtils.consume(entity);
 
             boolean ok = httpCode >= 200 && httpCode < 300;
-            log("<gray>QQ音乐HTTP=" + httpCode + " 返回：" + cut(body, 1200));
+            if (QQSong.debug) {
+                log("<gray>QQ音乐HTTP=" + httpCode + " 返回：" + cut(body, 1200));
+            }
 
-            if (!ok) {
+            if (!ok && QQSong.debug) {
                 log("<red>QQ音乐服务器返回错误：" + cut(body, 1200));
             }
 
             return new HttpResObj(body, ok);
         } catch (Exception e) {
-            log("<red>" + errorMsg);
             if (QQSong.debug) {
+                log("<red>" + errorMsg);
                 e.printStackTrace();
             }
             return null;
