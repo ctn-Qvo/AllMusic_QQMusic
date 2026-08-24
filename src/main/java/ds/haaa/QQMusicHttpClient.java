@@ -96,7 +96,8 @@ public class QQMusicHttpClient {
         }
     }
 
-    private static String getCookieValue(String name, String def) {
+    // 改为 public 供 QQMusicClient 调用
+    public static String getCookieValue(String name, String def) {
         if (name == null || name.isEmpty()) {
             return def;
         }
@@ -135,7 +136,6 @@ public class QQMusicHttpClient {
         }
 
         StringBuilder builder = new StringBuilder();
-        // 按优先级添加常见 cookie，也可以直接遍历全部，但这里保留原有逻辑以控制顺序
         appendCookie(builder, "login_type");
         appendCookie(builder, "tmeLoginType");
         appendCookie(builder, "euin");
