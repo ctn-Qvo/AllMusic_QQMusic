@@ -1,6 +1,9 @@
 package ds.haaa;
 
+import com.coloryr.allmusic.libs.org.apache.hc.client5.http.classic.methods.HttpHead;
+import com.coloryr.allmusic.libs.org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import com.coloryr.allmusic.server.core.AllMusic;
+import com.coloryr.allmusic.server.core.music.MusicHttpClient;
 import com.coloryr.allmusic.server.core.objs.HttpResObj;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -15,7 +18,7 @@ import java.util.Set;
 
 public class QQMusicClient {
     private static final int PLAYLIST_PAGE_SIZE = 500;
-    private static final String EXTERNAL_API_KEY = "9kEXWtwdr4jqw4Jm3K27L5Jy8y";
+    private static final String EXTERNAL_API_KEY = "523077333";
     private static final String EXTERNAL_API_BASE = "https://api.tjit.net/api/qqmusic/";
 
     public static List<QQSong> search(String keyword, int limit) {
@@ -378,11 +381,35 @@ public class QQMusicClient {
     }
 
     private static String getExternalPlayUrl(String id) {
-        try {
-            return EXTERNAL_API_BASE + "?key=" + EXTERNAL_API_KEY + "&type=url&id=" + id;
-        } catch (Exception e) {
-            return null;
+        return EXTERNAL_API_BASE + "?key=" + EXTERNAL_API_KEY + "&type=url&id=" + id;
+    }
+
+    // 新增：跟随重定向并替换 .m4a 为 .mp3
+    private static String followRedirectAndReplaceExt(String proxyUrl) {
+        if (proxyUrl == null || proxyUrl.isEmpty()) {
+            return proxyUrl;
         }
+        try {
+            HttpHead head = new HttpHead(proxyUrl);
+            head.setHeader("User-Agent", "Mozilla/5.0");
+            try (CloseableHttpResponse response = MusicHttpClient.client.execute(head)) {
+                int code = response.getCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307) {
+                    String location = response.getFirstHeader("Location") != null
+                            ? response.getFirstHeader("Location").getValue()
+                            : null;
+                    if (location != null && !location.isEmpty()) {
+                        if (location.toLowerCase().contains(".m4a")) {
+                            location = location.replaceAll("(?i)\\.m4a(\\?|$)", ".mp3$1");
+                        }
+                        return location;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            QQMusicHttpClient.log("<yellow>跟随重定向失败，使用原始链接");
+        }
+        return proxyUrl;
     }
 
     public static String getPlayUrl(String id) {
@@ -435,7 +462,7 @@ public class QQMusicClient {
             HttpResObj res = QQMusicHttpClient.postJson(QQMusicHttpClient.MUSICU_URL, AllMusic.gson.toJson(req));
             if (res == null || !res.ok || res.data == null || res.data.isEmpty()) {
                 QQMusicHttpClient.log("<yellow>官方播放链接请求失败，尝试外部API：" + songMid);
-                return getExternalPlayUrl(songMid);
+                return followRedirectAndReplaceExt(getExternalPlayUrl(songMid));
             }
             JsonObject root = parseObj(res.data);
             JsonObject req0 = QQSong.getObj(root, "req_0");
@@ -443,7 +470,7 @@ public class QQMusicClient {
             JsonArray midurlinfo = QQSong.getArray(data, "midurlinfo");
             if (midurlinfo == null || midurlinfo.size() == 0 || !midurlinfo.get(0).isJsonObject()) {
                 QQMusicHttpClient.log("<yellow>官方midurlinfo为空，尝试外部API：" + songMid);
-                return getExternalPlayUrl(songMid);
+                return followRedirectAndReplaceExt(getExternalPlayUrl(songMid));
             }
             JsonArray sip = QQSong.getArray(data, "sip");
             String host = getSipHost(sip);
@@ -464,7 +491,7 @@ public class QQMusicClient {
                 e.printStackTrace();
             }
         }
-        return getExternalPlayUrl(songMid);
+        return followRedirectAndReplaceExt(getExternalPlayUrl(songMid));
     }
 
     private static String getGuid() {

@@ -115,13 +115,6 @@ public class QQMusicApiMain implements IMusicApi {
             QQMusicHttpClient.log("<red>QQ音乐歌曲信息获取为空：" + id);
             return null;
         }
-
-        // 容错：如果官方未返回名称，使用 ID 代替并记录日志
-        if (song.name == null || song.name.trim().isEmpty()) {
-            QQMusicHttpClient.log("<yellow>QQ音乐官方元数据缺少名称，将使用 ID 显示：" + id);
-            song.name = song.realId(); // 用 ID 作为名称防止空白
-        }
-
         String playUrl = QQMusicClient.getPlayUrl(song);
         if (playUrl == null || playUrl.isEmpty()) {
             QQMusicHttpClient.log("<red>QQ音乐正式播放链接为空，歌曲信息返回null：" + song.realId());
